@@ -60,6 +60,7 @@ class BackTest:
         """
         plot_values = self.portfolio_value.copy()
         plot_values.plot(figsize=(12, 8), title="Portfolio Value", grid=True, ylabel="Value", xlabel="Date", legend=True)
+     
         
     
     def calculate_alpha_beta(self):
@@ -89,13 +90,29 @@ class BackTest:
         """
         self.portfolio_value = self.portfolio_value.infer_objects(copy=False) 
         portfolio_returns = self.portfolio_value.pct_change().dropna().values
+
+        # Calculate market returns
+        market_sp500_data = YahooDataSource("^GSPC", self.data_source.start_date, self.data_source.end_date)
+        market_sp500_data = market_sp500_data.get_data_by_frequency(self.data_source.start_date, self.data_source.end_date, "1d")
+        market_sp500_data.ffill(inplace=True)
+        market_sp500_data = market_sp500_data.loc[:, "^GSPC"].to_frame()
+        benchmark_data = market_sp500_data[market_sp500_data.index >= self.portfolio_value.index[0]]
+        market_sp500_data = market_sp500_data.pct_change().dropna().values
         
         summary = {}
         summary["Total Return"] = self.portfolio_value.iloc[-1].values[0] - 1
         summary["Mean Daily Return"] = portfolio_returns.mean()
+        summary["Mean Yearly Retrun"] = (1 + portfolio_returns.mean())**252 - 1
+        summary["Mean Daily SP500 Return"] = market_sp500_data.mean()
+        summary["Mean Yearly SP500 Return"] = (1 + market_sp500_data.mean())**252 - 1
         summary["Std Dev of Daily Return"] = portfolio_returns.std()
-        summary["Sharpe Ratio"] = (summary["Mean Daily Return"] / summary["Std Dev of Daily Return"])*np.sqrt(252)
-        
+        summary["Sharpe Ratio"] = ((summary["Mean Daily Return"])/ summary["Std Dev of Daily Return"])*np.sqrt(252)
+
+        # Calculate sortino ratio
+        downside_returns = portfolio_returns[portfolio_returns < 0]
+        downside_std = np.std(downside_returns)
+        summary["Sortino Ratio"] = (summary["Mean Daily Return"] / downside_std) * np.sqrt(252)
+
         cumulative_max = np.maximum.accumulate(self.portfolio_value)
     
         # Calculate the drawdown at each point in the array
@@ -106,6 +123,9 @@ class BackTest:
         summary["Calmar Ratio"] = (summary["Total Return"] / abs(summary["Max Drawdown"]))
         
         summary["Alpha"], summary["Beta"] = self.calculate_alpha_beta()
+
+        # Show summary in df
+        summary_df = pd.DataFrame.from_dict(summary, orient='index', columns=['Value'])
+        summary_df.index.name = 'Metric'
         
-        return summary
-        
+        return summary_df
