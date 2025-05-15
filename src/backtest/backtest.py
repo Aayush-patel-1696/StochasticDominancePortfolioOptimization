@@ -111,6 +111,9 @@ class BackTest:
         # Calculate sortino ratio
         downside_returns = portfolio_returns[portfolio_returns < 0]
         downside_std = np.std(downside_returns)
+        summary["Downside Std Daily"] = downside_std
+
+        summary["Sharpe Ratio"] = ((summary["Mean Daily Return"])/ summary["Std Dev of Daily Return"])*np.sqrt(252)
         summary["Sortino Ratio"] = (summary["Mean Daily Return"] / downside_std) * np.sqrt(252)
 
         cumulative_max = np.maximum.accumulate(self.portfolio_value)
@@ -119,8 +122,9 @@ class BackTest:
         drawdowns = (self.portfolio_value - cumulative_max) / cumulative_max
         
         # Find the maximum drawdown
-        summary["Max Drawdown"] = np.min(drawdowns)
-        summary["Calmar Ratio"] = (summary["Total Return"] / abs(summary["Max Drawdown"]))
+       
+        summary["Calmar Ratio"] = (summary["Total Return"] / abs(np.min(drawdowns)))
+        summary["Max Drawdown"] = abs(np.min(drawdowns))
         
         summary["Alpha"], summary["Beta"] = self.calculate_alpha_beta()
 

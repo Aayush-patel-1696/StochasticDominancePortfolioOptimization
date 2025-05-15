@@ -43,6 +43,7 @@ class ConstrainedBasedStrategy(Strategy):
             test_end_date = date
 
             price_data = data_source.get_data_by_frequency(start_date = test_start_date, end_date = test_end_date, frequency = data_frequency)
+
             
             rtn_data = price_data.pct_change()[1:]
             
@@ -339,6 +340,7 @@ class MeanVariance(ConstrainedBasedStrategy):
 
         result = self.optimize(target_return=self.target_return,allow_shorting=self.allow_shorting)
         if result.success:
+            print("Optimal Weights:", result.x)
             return result.x
         else:
             raise ValueError("Optimization failed: " + result.message)
@@ -369,11 +371,14 @@ class StochasticDominance(ConstrainedBasedStrategy):
         self.array_transpose = np.transpose(self.array)
         self.investment_amount = investment_amount
         bench_mark_weights = self.strategy.get_optimal_allocations(returns_data,investment_amount)
+        print("Bench mark weights",bench_mark_weights)
         self.results = self.optimize(bench_mark_weights,long_only=self.long_only)
         return self.results
 
     def optimize(self,bench_mark_weights,long_only=True):
 
+
+        chi = 0
         assets = self.num_assets
         senarios = self.num_senarios
         returns = self.array_transpose
@@ -402,7 +407,103 @@ class StochasticDominance(ConstrainedBasedStrategy):
             constraints.append(weights>=0)
         constraints.extend([cp.sum(weights)==1,S>=0])
 
-        objective = cp.Maximize((mean.T@weights))
+        # Diversification constraints
+        # for i in range(assets):
+        #     constraints.append(cp.abs(weights[i]) <= 1/assets)
+        #     # constraints.append(cp.abs(weights[i]) >= 0.05)
+
+        objective = cp.Maximize((mean.T@weights)- chi*cp.mean(cp.abs(X_returns-cp.mean(X_returns,axis=0))))
         problem = cp.Problem(objective, constraints)
         problem.solve()
+        try:
+            return weights.value.flatten()
+        except:
+            return bench_mark_weights.flatten()
+
+        return 
+    
+
+class StochasticDominanceOpt(ConstrainedBasedStrategy):
+
+    def __init__(self,benchmark_srategy:ConstrainedBasedStrategy=EqualyWeighted(),long_only=True):
+       
+
+        self.results = None
+        self.array = None
+        self.num_assets = None
+        self.num_senarios = None
+        self.array_transpose = None
+        self.investment_amount = None
+        self.strategy = benchmark_srategy
+        self.long_only = long_only
+        self.results = None
+        
+    def get_optimal_allocations(self,returns_data:pd.DataFrame,investment_amount:int=1):
+
+        self.array = returns_data.to_numpy()
+        self.num_assets = len(self.array[:,0])
+        self.num_senarios = len(self.array[0,:])
+        self.array_transpose = np.transpose(self.array)
+        self.investment_amount = investment_amount
+        bench_mark_weights = self.strategy.get_optimal_allocations(returns_data,investment_amount)
+        self.results = self.optimize(bench_mark_weights,long_only=self.long_only)
+        return self.results
+
+    def optimize(self,bench_mark_weights,long_only=True):
+
+
+        chi = 0
+        assets = self.num_assets
+        senarios = self.num_senarios
+        returns = self.array_transpose
+        mean = np.resize(self.array.mean(axis=1),(self.num_assets,1))
+
+        Y_weights = (1/assets)*(np.ones((assets,1)))
+        Y_returns = np.sort(((returns)@Y_weights).flatten())
+        V = [np.sum((eta-Y_returns)[Y_returns< eta])/(len(Y_returns)) for eta in Y_returns]
+
+        dict_eta_V = dict(zip(Y_returns,V))
+
+
+        k=0
+        Eta = {Y_returns[-1]:Y_returns<=Y_returns[-1]}
+        while True:
+
+            weights = cp.Variable(shape=(assets,1),name="weights")
+        
+            objective = cp.Maximize((mean.T@weights))  # Objective function for first stage problem
+
+        
+            constraints = []
+            for et in Eta:
+                events = Eta[et]
+                g_x_events = returns[events,:]@(weights)
+                constraints.append(((1/(len(events)))*cp.sum(et -g_x_events )) <= dict_eta_V[et])
+            
+            constraints.extend([cp.sum(weights)==1,weights>=0])
+
+            # Solve Problem
+            problem = cp.Problem(objective, constraints)
+            problem.solve()
+
+            Z_x =returns@(weights.value).flatten()
+
+            # Calculate deltas 
+            delta_j = [ np.sum((eta-Z_x)[Z_x< eta])/(len(Z_x))-dict_eta_V[eta] for eta in Y_returns ]
+            
+            # Find out max eta
+            delta_max = np.max(delta_j)
+            eta_max = Y_returns[np.argmax(delta_j)]
+
+            if delta_max <= 0:
+                break
+            else:
+                Eta[eta_max] = Z_x<eta_max
+                
+            k= k+1
+
+            if k>100:
+                return bench_mark_weights.flatten()
+
+
         return weights.value.flatten()
